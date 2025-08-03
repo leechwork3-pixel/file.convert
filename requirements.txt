@@ -1,0 +1,9 @@
+pyrogram==2.0.106
+tgcrypto
+motor
+python-dotenv
+Werkzeug
+flask
+flask-admin
+prometheus_client
+prometheus-flask-exporter
