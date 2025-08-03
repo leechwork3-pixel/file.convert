@@ -78,6 +78,7 @@ text
 Run Postman collection via:
 newman run tests/advanced_converter_bot.postman_collection.json
 
+## Log Channel 
 
 What is the "Log Channel" function?
 Purpose: It acts as a centralized place where the bot can send messages about its activity that you, as the bot owner/admin, want to track.
