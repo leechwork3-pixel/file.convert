@@ -18,12 +18,20 @@ def register(app):
 
         if not is_size_allowed(doc.file_size):
             return await message.reply("❌ Max file size is 200MB.")
+
         if not is_allowed_file(doc.file_name):
             return await message.reply("❌ Unsupported file type.")
 
         sessions[message.from_user.id] = doc
-        buttons = [[InlineKeyboardButton(fmt, callback_data=f"convert:{fmt}")] for fmt in formats]
-        await message.reply("Select output format:", reply_markup=InlineKeyboardMarkup(buttons))
+        buttons = [
+            [InlineKeyboardButton(fmt, callback_data=f"convert:{fmt}")]
+            for fmt in formats
+        ]
+        await message.reply(
+            "📤 *Select the format you want to convert to:*",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="Markdown"
+        )
 
     @app.on_callback_query(filters.regex("^convert:"))
     async def conversion_callback(_, call: CallbackQuery):
@@ -31,7 +39,9 @@ def register(app):
         uid = call.from_user.id
 
         if uid not in sessions:
-            return await call.message.edit_text("❗Session expired. Please re-upload.")
+            return await call.message.edit_text(
+                "❗Session expired, please upload the file again."
+            )
 
         doc = sessions.pop(uid)
         raw_name = secure_filename(doc.file_name)
@@ -39,12 +49,11 @@ def register(app):
         base = os.path.splitext(input_path)[0]
         output_path = f"{base}_converted.{fmt}"
 
-        await call.message.edit_text("⚙️ Converting... please wait.")
+        await call.message.edit_text("⚙️ Converting your file, please wait...")
 
         try:
             await app.download_media(doc, input_path)
 
-            # Capture STDERR for real error diagnosis!
             proc = await asyncio.create_subprocess_exec(
                 "ebook-convert", input_path, output_path,
                 stdout=asyncio.subprocess.PIPE,
@@ -52,27 +61,56 @@ def register(app):
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
-            # If conversion fails, show stderr output
+            # Check conversion success
             if proc.returncode != 0 or not os.path.exists(output_path):
-                error_log = stderr.decode("utf-8") if stderr else "Unknown error"
-                await call.message.edit_text(f"❌ Conversion failed.\n\nError log:\n<code>{error_log}</code>", parse_mode="html")
+                error_log = stderr.decode("utf-8").strip() if stderr else "Unknown error"
+                await call.message.edit_text(
+                    f"❌ *Conversion failed!*\n\n"
+                    f"``````",
+                    parse_mode="Markdown"
+                )
                 return
 
-            await call.message.reply_document(output_path)
+            # Success! Send converted file to user
+            await call.message.reply_document(
+                output_path,
+                caption=(
+                    f"✅ *Conversion Successful!*\n\n"
+                    f"*File:* `{os.path.basename(output_path)}`\n"
+                    f"*Format:* `{fmt.upper()}`"
+                ),
+                parse_mode="Markdown"
+            )
+
+            # Log to MongoDB
             await log_file(uid, os.path.basename(output_path), fmt.upper())
 
+            # Send to LOG_CHANNEL
             await app.send_document(
                 LOG_CHANNEL,
                 document=output_path,
-                caption=f"📁 Converted by @{call.from_user.username or 'N/A'} (`{uid}`)\n{doc.file_name} → {fmt.upper()}"
+                caption=(
+                    f"📁 *File Converted*\n"
+                    f"👤 *User:* @{call.from_user.username or 'N/A'} (`{uid}`)\n"
+                    f"📝 *Original:* `{doc.file_name}`\n"
+                    f"📤 *Converted To:* `{fmt.upper()}`"
+                ),
+                parse_mode="Markdown"
             )
 
         except asyncio.TimeoutError:
-            await call.message.edit_text("❌ Conversion timeout.")
+            await call.message.edit_text("❌ Conversion timeout. Please try a smaller file.")
         except Exception as e:
-            await call.message.edit_text(f"❌ Conversion failed.\n\nError: <code>{str(e)}</code>", parse_mode="html")
+            await call.message.edit_text(
+                f"❌ *An error occurred:*\n``````",
+                parse_mode="Markdown"
+            )
         finally:
+            # Cleanup any leftover files
             for path in [input_path, output_path]:
-                if os.path.exists(path):
-                    os.remove(path)
-
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except Exception:
+                    pass
+                    
