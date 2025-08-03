@@ -44,15 +44,19 @@ def register(app):
         try:
             await app.download_media(doc, input_path)
 
+            # Capture STDERR for real error diagnosis!
             proc = await asyncio.create_subprocess_exec(
                 "ebook-convert", input_path, output_path,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            await asyncio.wait_for(proc.communicate(), timeout=300)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
-            if not os.path.exists(output_path):
-                raise Exception("Conversion failed.")
+            # If conversion fails, show stderr output
+            if proc.returncode != 0 or not os.path.exists(output_path):
+                error_log = stderr.decode("utf-8") if stderr else "Unknown error"
+                await call.message.edit_text(f"❌ Conversion failed.\n\nError log:\n<code>{error_log}</code>", parse_mode="html")
+                return
 
             await call.message.reply_document(output_path)
             await log_file(uid, os.path.basename(output_path), fmt.upper())
@@ -65,9 +69,10 @@ def register(app):
 
         except asyncio.TimeoutError:
             await call.message.edit_text("❌ Conversion timeout.")
-        except Exception:
-            await call.message.edit_text("❌ Conversion failed.")
+        except Exception as e:
+            await call.message.edit_text(f"❌ Conversion failed.\n\nError: <code>{str(e)}</code>", parse_mode="html")
         finally:
             for path in [input_path, output_path]:
                 if os.path.exists(path):
                     os.remove(path)
+
